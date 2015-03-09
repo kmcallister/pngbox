@@ -11,7 +11,7 @@
 #![crate_type = "lib"]
 
 #![allow(unused_features)]
-#![feature(collections, core, io, libc, path, test)]
+#![feature(collections, core, old_io, old_path, libc, path, test)]
 
 extern crate libc;
 
@@ -58,10 +58,10 @@ pub extern fn read_data(png_ptr: *mut ffi::png_struct, data: *mut u8, length: si
         let io_ptr = ffi::RUST_png_get_io_ptr(png_ptr);
         let image_data: &mut ImageData = mem::transmute(io_ptr);
         let len = length as usize;
-        let buf = slice::from_raw_mut_buf(&data, len);
+        let buf = slice::from_raw_parts_mut(data, len);
         let end_pos = std::cmp::min(image_data.data.len()-image_data.offset, len);
         let src = &image_data.data[image_data.offset..image_data.offset+end_pos];
-        ptr::copy_memory(buf.as_mut_ptr(), src.as_ptr(), src.len());
+        ptr::copy(buf.as_mut_ptr(), src.as_ptr(), src.len());
         image_data.offset += end_pos;
     }
 }
@@ -143,9 +143,9 @@ pub fn load_png_from_memory(image: &[u8]) -> Result<Image,String> {
         let (color_type, pixel_width) = match (updated_color_type as c_int, updated_bit_depth) {
             (ffi::COLOR_TYPE_RGB, 8) |
             (ffi::COLOR_TYPE_RGBA, 8) |
-            (ffi::COLOR_TYPE_PALETTE, 8) => (PixelsByColorType::RGBA8 as fn(Vec<u8>) -> PixelsByColorType, 4us),
-            (ffi::COLOR_TYPE_GRAY, 8) => (PixelsByColorType::K8 as fn(Vec<u8>) -> PixelsByColorType, 1us),
-            (ffi::COLOR_TYPE_GA, 8) => (PixelsByColorType::KA8 as fn(Vec<u8>) -> PixelsByColorType, 2us),
+            (ffi::COLOR_TYPE_PALETTE, 8) => (PixelsByColorType::RGBA8 as fn(Vec<u8>) -> PixelsByColorType, 4usize),
+            (ffi::COLOR_TYPE_GRAY, 8) => (PixelsByColorType::K8 as fn(Vec<u8>) -> PixelsByColorType, 1usize),
+            (ffi::COLOR_TYPE_GA, 8) => (PixelsByColorType::KA8 as fn(Vec<u8>) -> PixelsByColorType, 2usize),
             _ => panic!("color type not supported"),
         };
 
@@ -171,8 +171,7 @@ pub extern fn write_data(png_ptr: *mut ffi::png_struct, data: *mut u8, length: s
     unsafe {
         let io_ptr = ffi::RUST_png_get_io_ptr(png_ptr);
         let writer: &mut &mut io::Writer = mem::transmute(io_ptr);
-        let data = data as *const _;
-        let buf = slice::from_raw_buf(&data, length as usize);
+        let buf = slice::from_raw_parts(data, length as usize);
         match writer.write_all(buf) {
             Err(e) => panic!("{}", e.desc),
             _ => {}
