@@ -13,5 +13,14 @@ rustc-serialize = "0"
 [dependencies.png-sys]
 git = "https://github.com/servo/rust-png"
 
+[dependencies.urpc]
+git = "https://github.com/kmcallister/urpc"
+
+[dependencies.gaol]
+git = "https://github.com/pcwalton/gaol"
+
+[dependencies.unix_socket]
+git = "https://github.com/sfackler/rust-unix-socket"
+
 [build-dependencies.gcc]
 git = "https://github.com/alexcrichton/gcc-rs"

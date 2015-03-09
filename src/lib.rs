@@ -11,20 +11,28 @@
 #![crate_type = "lib"]
 
 #![allow(unused_features)]
-#![feature(collections, core, old_io, old_path, libc, path, test)]
+#![feature(core, libc, test, std_misc, old_io, old_path)]
 
 extern crate libc;
 extern crate "rustc-serialize" as rustc_serialize;
+extern crate unix_socket;
+extern crate gaol;
+
+#[macro_use]
+extern crate urpc;
 
 use libc::{c_int, size_t};
-use std::mem;
+use std::{mem, ptr, slice};
+use std::ops::{Deref, DerefMut};
 use std::iter::repeat;
-use std::ptr;
-use std::slice;
+use std::os::unix::AsRawFd;
+use unix_socket::UnixStream;
+use gaol::profile::Profile;
+use gaol::sandbox::{Sandbox, SandboxMethods, Command};
 
 mod ffi;
 
-#[derive(RustcEncodable, RustcDecodable)]
+#[derive(PartialEq, Eq, RustcEncodable, RustcDecodable)]
 pub enum PixelsByColorType {
     K8(Vec<u8>),
     KA8(Vec<u8>),
@@ -32,11 +40,59 @@ pub enum PixelsByColorType {
     RGBA8(Vec<u8>),
 }
 
-#[derive(RustcEncodable, RustcDecodable)]
+#[derive(PartialEq, Eq, RustcEncodable, RustcDecodable)]
 pub struct Image {
     pub width: u32,
     pub height: u32,
     pub pixels: PixelsByColorType,
+}
+
+#[derive(PartialEq, Eq, RustcEncodable, RustcDecodable)]
+pub enum DecodeResult {
+    Image(Image),
+    Error(String),
+}
+
+urpc! {
+    pub interface png {
+        fn decode(compressed: Vec<u8>) -> ::DecodeResult { }
+    }
+}
+
+pub struct LocalDecoder;
+
+impl png::Methods for LocalDecoder {
+    fn decode(&mut self, compressed: Vec<u8>) -> urpc::Result<DecodeResult> {
+        Ok(decode_from_memory(&compressed))
+    }
+}
+
+pub struct SandboxedDecoder(png::Client<UnixStream>);
+
+impl Deref for SandboxedDecoder {
+    type Target = png::Client<UnixStream>;
+    fn deref(&self) -> &png::Client<UnixStream> { &self.0 }
+}
+
+impl DerefMut for SandboxedDecoder {
+    fn deref_mut(&mut self) -> &mut png::Client<UnixStream> { &mut self.0 }
+}
+
+impl SandboxedDecoder {
+    pub fn profile() -> Profile {
+        // No operations allowed.
+        Profile::new(vec![]).unwrap()
+    }
+
+    pub fn new() -> SandboxedDecoder {
+        let [s1, s2] = UnixStream::unnamed().unwrap();
+        let mut command = Command::new(b"/home/keegan/pngbox/target/pngbox_daemon");
+        command.arg(&format!("{}", s1.as_raw_fd()));
+        let profile = SandboxedDecoder::profile();
+        Sandbox::new(profile).start(&mut command).unwrap();
+
+        SandboxedDecoder(png::Client::new(s2))
+    }
 }
 
 // This intermediate data structure is used to read
@@ -55,29 +111,30 @@ extern "C" fn read_data(png_ptr: *mut ffi::png_struct, data: *mut u8, length: si
         let buf = slice::from_raw_parts_mut(data, len);
         let end_pos = std::cmp::min(image_data.data.len()-image_data.offset, len);
         let src = &image_data.data[image_data.offset..image_data.offset+end_pos];
+
         ptr::copy(buf.as_mut_ptr(), src.as_ptr(), src.len());
         image_data.offset += end_pos;
     }
 }
 
-pub fn load_png_from_memory(image: &[u8]) -> Result<Image, String> {
+fn decode_from_memory(image: &[u8]) -> DecodeResult {
     unsafe {
         let mut png_ptr = ffi::RUST_png_create_read_struct(&*ffi::RUST_png_get_header_ver(ptr::null_mut()),
                                                       ptr::null_mut(),
                                                       ptr::null_mut(),
                                                       ptr::null_mut());
         if png_ptr.is_null() {
-            return Err("could not create read struct".to_string());
+            return DecodeResult::Error("could not create read struct".to_string());
         }
         let mut info_ptr = ffi::RUST_png_create_info_struct(png_ptr);
         if info_ptr.is_null() {
             ffi::RUST_png_destroy_read_struct(&mut png_ptr, ptr::null_mut(), ptr::null_mut());
-            return Err("could not create info struct".to_string());
+            return DecodeResult::Error("could not create info struct".to_string());
         }
         let res = ffi::setjmp(ffi::pngshim_jmpbuf(png_ptr));
         if res != 0 {
             ffi::RUST_png_destroy_read_struct(&mut png_ptr, &mut info_ptr, ptr::null_mut());
-            return Err("error reading png".to_string());
+            return DecodeResult::Error("error reading png".to_string());
         }
 
         let mut image_data = ImageData {
@@ -141,7 +198,7 @@ pub fn load_png_from_memory(image: &[u8]) -> Result<Image, String> {
 
         ffi::RUST_png_destroy_read_struct(&mut png_ptr, &mut info_ptr, ptr::null_mut());
 
-        Ok(Image {
+        DecodeResult::Image(Image {
             width: width as u32,
             height: height as u32,
             pixels: color_type(image_data),
@@ -152,18 +209,20 @@ pub fn load_png_from_memory(image: &[u8]) -> Result<Image, String> {
 #[cfg(test)]
 mod test {
     use std::old_io::File;
-    use super::load_png_from_memory;
+    use super::{DecodeResult, LocalDecoder, SandboxedDecoder};
     use super::PixelsByColorType::RGBA8;
 
-    fn load_rgba8(file: &'static str, w: u32, h: u32) {
+    fn load_rgba8<D>(decoder: &mut D, file: &'static str, w: u32, h: u32) -> Vec<u8>
+        where D: super::png::Methods,
+    {
         let contents = File::open(&Path::new(file)).read_to_end().unwrap();
-        match load_png_from_memory(&contents) {
-            Err(m) => panic!(m),
-            Ok(image) => {
+        match decoder.decode(contents).unwrap() {
+            DecodeResult::Error(m) => panic!(m),
+            DecodeResult::Image(image) => {
                 assert_eq!(image.width, w);
                 assert_eq!(image.height, h);
                 match image.pixels {
-                    RGBA8(_) => {}
+                    RGBA8(px) => px,
                     _ => panic!("Expected RGBA8")
                 }
             }
@@ -171,13 +230,13 @@ mod test {
     }
 
     #[test]
-    fn test_load() {
-        load_rgba8("test/servo-screenshot.png", 831, 624);
-    }
+    fn test_sandboxed() {
+        let mut d = SandboxedDecoder::new();
 
-    #[test]
-    fn test_load_grayscale() {
-        // grayscale images should be decoded to rgba
-        load_rgba8("test/gray.png", 100, 100);
+        assert_eq!(load_rgba8(&mut *d, "test/servo-screenshot.png", 831, 624),
+            load_rgba8(&mut LocalDecoder, "test/servo-screenshot.png", 831, 624));
+
+        assert_eq!(load_rgba8(&mut *d, "test/gray.png", 100, 100),
+            load_rgba8(&mut LocalDecoder, "test/gray.png", 100, 100));
     }
 }
