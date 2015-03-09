@@ -7,6 +7,9 @@ authors = ["The Servo Project Developers"]
 links = "png-sys"
 build = "build.rs"
 
+[dependencies]
+rustc-serialize = "0"
+
 [dependencies.png-sys]
 git = "https://github.com/servo/rust-png"
 

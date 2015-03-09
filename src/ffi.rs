@@ -7,7 +7,7 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-#![allow(non_camel_case_types)]
+#![allow(non_camel_case_types, dead_code)]
 
 use libc::{c_int, size_t, c_void, c_char};
 

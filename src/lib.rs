@@ -14,18 +14,17 @@
 #![feature(collections, core, old_io, old_path, libc, path, test)]
 
 extern crate libc;
+extern crate "rustc-serialize" as rustc_serialize;
 
 use libc::{c_int, size_t};
 use std::mem;
-use std::old_io as io;
-use std::old_io::File;
 use std::iter::repeat;
 use std::ptr;
 use std::slice;
 
-pub mod ffi;
+mod ffi;
 
-
+#[derive(RustcEncodable, RustcDecodable)]
 pub enum PixelsByColorType {
     K8(Vec<u8>),
     KA8(Vec<u8>),
@@ -33,6 +32,7 @@ pub enum PixelsByColorType {
     RGBA8(Vec<u8>),
 }
 
+#[derive(RustcEncodable, RustcDecodable)]
 pub struct Image {
     pub width: u32,
     pub height: u32,
@@ -47,7 +47,7 @@ struct ImageData<'a> {
     offset: usize,
 }
 
-pub extern fn read_data(png_ptr: *mut ffi::png_struct, data: *mut u8, length: size_t) {
+extern "C" fn read_data(png_ptr: *mut ffi::png_struct, data: *mut u8, length: size_t) {
     unsafe {
         let io_ptr = ffi::RUST_png_get_io_ptr(png_ptr);
         let image_data: &mut ImageData = mem::transmute(io_ptr);
@@ -60,19 +60,7 @@ pub extern fn read_data(png_ptr: *mut ffi::png_struct, data: *mut u8, length: si
     }
 }
 
-pub fn load_png(path: &Path) -> Result<Image,String> {
-    let mut reader = match File::open_mode(path, io::Open, io::Read) {
-        Ok(r) => r,
-        Err(e) => return Err(format!("could not open file: {}", e.desc)),
-    };
-    let buf = match reader.read_to_end() {
-        Ok(b) => b,
-        Err(e) => return Err(format!("could not read file: {}", e.desc))
-    };
-    load_png_from_memory(buf.as_slice())
-}
-
-pub fn load_png_from_memory(image: &[u8]) -> Result<Image,String> {
+pub fn load_png_from_memory(image: &[u8]) -> Result<Image, String> {
     unsafe {
         let mut png_ptr = ffi::RUST_png_create_read_struct(&*ffi::RUST_png_get_header_ver(ptr::null_mut()),
                                                       ptr::null_mut(),
@@ -163,12 +151,13 @@ pub fn load_png_from_memory(image: &[u8]) -> Result<Image,String> {
 
 #[cfg(test)]
 mod test {
-    extern crate test;
-    use super::load_png;
+    use std::old_io::File;
+    use super::load_png_from_memory;
     use super::PixelsByColorType::RGBA8;
 
     fn load_rgba8(file: &'static str, w: u32, h: u32) {
-        match load_png(&Path::new(file)) {
+        let contents = File::open(&Path::new(file)).read_to_end().unwrap();
+        match load_png_from_memory(&contents) {
             Err(m) => panic!(m),
             Ok(image) => {
                 assert_eq!(image.width, w);
