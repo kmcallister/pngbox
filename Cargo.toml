@@ -1,6 +1,6 @@
 [package]
 
-name = "png"
+name = "pngbox"
 version = "0.1.0"
 authors = ["The Servo Project Developers"]
 
@@ -8,7 +8,7 @@ links = "png-sys"
 build = "build.rs"
 
 [dependencies.png-sys]
-path = "png-sys"
+git = "https://github.com/servo/rust-png"
 
 [build-dependencies.gcc]
 git = "https://github.com/alexcrichton/gcc-rs"
