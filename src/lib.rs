@@ -17,6 +17,7 @@ extern crate libc;
 extern crate "rustc-serialize" as rustc_serialize;
 extern crate unix_socket;
 extern crate gaol;
+extern crate "test" as rust_test;
 
 #[macro_use]
 extern crate urpc;
@@ -211,6 +212,7 @@ mod test {
     use std::old_io::File;
     use super::{DecodeResult, LocalDecoder, SandboxedDecoder};
     use super::PixelsByColorType::RGBA8;
+    use rust_test::Bencher;
 
     fn load_rgba8<D>(decoder: &mut D, file: &'static str, w: u32, h: u32) -> Vec<u8>
         where D: super::png::Methods,
@@ -238,5 +240,28 @@ mod test {
 
         assert_eq!(load_rgba8(&mut *d, "test/gray.png", 100, 100),
             load_rgba8(&mut LocalDecoder, "test/gray.png", 100, 100));
+    }
+
+    #[bench]
+    fn bench_local(bh: &mut Bencher) {
+        use super::png::Methods;
+
+        let contents = File::open(&Path::new("test/servo-screenshot.png"))
+            .read_to_end().unwrap();
+        bh.iter(|| {
+            assert!(LocalDecoder.decode(contents.clone()).is_ok());
+        });
+    }
+
+    #[bench]
+    fn bench_sandboxed(bh: &mut Bencher) {
+        use super::png::Methods;
+
+        let mut decoder = SandboxedDecoder::new();
+        let contents = File::open(&Path::new("test/servo-screenshot.png"))
+            .read_to_end().unwrap();
+        bh.iter(|| {
+            assert!(decoder.decode(contents.clone()).is_ok());
+        });
     }
 }
