@@ -11,7 +11,7 @@
 #![crate_type = "lib"]
 
 #![allow(unused_features)]
-#![feature(core, libc, test, std_misc, old_io, old_path)]
+#![feature(core, libc, test, std_misc, old_io, old_path, io)]
 
 extern crate libc;
 extern crate "rustc-serialize" as rustc_serialize;
